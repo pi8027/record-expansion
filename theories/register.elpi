@@ -1,0 +1,10 @@
+main [str RName] :- !,
+  std.assert! (coq.locate RName (indt R))
+    "The first argument must be a record name",
+  std.assert! (coq.env.indt R tt N N _ [K] [KTY])
+    "The record is too complex",
+  std.map {coq.env.projections R} (p\ p'\ p = some p') Projs,
+  coq.elpi.accumulate _ "record.expand.db"
+    (clause _ (before "records:start") (records R N K KTY Projs)).
+
+main _ :- coq.error "Elpi record.register record_name".
