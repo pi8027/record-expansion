@@ -6,19 +6,7 @@ build-copy-head-clause In Out Clause :- !,
   Clause = (copy In Out,
             pi args out\ copy (app [In|args]) out :- coq.mk-app Out args out).
 
-% Occurrence check
-pred coq.occur i:term, i:term.
-coq.occur X X :- !.
-coq.occur X (fun _ T F) :- !, coq.occur X T; pi y\ coq.occur X (F y).
-coq.occur X (let _ Ty T F) :- !,
-  coq.occur X Ty; coq.occur X T; pi y\ coq.occur X (F y).
-coq.occur X (prod _ T F) :- !, coq.occur X T; pi y\ coq.occur X (F y).
-coq.occur X (app TS) :- !, std.exists TS (coq.occur X).
-coq.occur X (fix _ _ Ty F) :- !, coq.occur X Ty; pi y\ coq.occur X (F y).
-coq.occur X (match T Rty B) :- !,
-  coq.occur X T; coq.occur X Rty; std.exists B (coq.occur X).
-
-% Builds a function, but avoids an eta-expansion
+% Build a function, but avoid an eta-expansion.
 pred coq.mk-fun i:name, i:term, i:term -> term, o:term.
 coq.mk-fun _ _ (x\ app [HD|F x]) Out :-
   (pi x\ sigma XS YS\
@@ -28,6 +16,11 @@ coq.mk-fun _ _ (x\ app [HD|F x]) Out :-
     XS' = XS, YS = [x]), !,
   coq.mk-app HD XS' Out.
 coq.mk-fun N Ty F (fun N Ty F) :- !.
+
+% Build a [let], but avoid [let x := t1 in t2] where [x] does not occur in [t2].
+pred coq.mk-let i:name, i:term, i:term i:term -> term, o:term.
+coq.mk-let _ _ _ (_\ T) T :- !.
+coq.mk-let N Ty T F (let N Ty T F) :- !.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 kind ctx type -> type.
@@ -49,7 +42,7 @@ pred push-fun-ctx-let i:name, i:term, i:term -> term, i:list term,
                       i:term -> ctx (term -> term), o:ctx (term -> term).
 push-fun-ctx-let N Ty T VS
                  (y\ ctx-let N' Ty' T' (C y)) (ctx-let N' Ty' T' C') :- !,
-  std.forall VS (v\ not (coq.occur v Ty'; coq.occur v T')),
+  std.forall VS (v\ not (occurs v Ty'; occurs v T')),
   pi z\ push-fun-ctx-let N Ty T VS (y\ C y z) (C' z).
 push-fun-ctx-let N Ty T VS
                  (y\ ctx-let N' (Ty' y) (T' y) (C y))
@@ -75,9 +68,10 @@ push-fun-ctx C C' :- !, coq.error (push-fun-ctx C C').
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 pred push-let-ctx-let i:name, i:term, i:term, i:term -> ctx term, o:ctx term.
-push-let-ctx-let _ _ _ (_\ C) C :- !.
-push-let-ctx-let N Ty T (x\ ctx-let N' (Ty' x) (T' x) (C x))
-                        (ctx-let N' (let N Ty T Ty') (let N Ty T T') C') :- !,
+push-let-ctx-let N Ty T (x\ ctx-let N' (TyF' x) (TF' x) (C x))
+                        (ctx-let N' Ty' T' C') :- !,
+  coq.mk-let N Ty T TyF' Ty',
+  coq.mk-let N Ty T TF' T',
   pi y\ push-let-ctx-let N Ty T (x\ C x y) (C' y).
 push-let-ctx-let N Ty T C C' :- !, coq.error (push-let-ctx-let N Ty T C C').
 
@@ -92,8 +86,8 @@ pred expand-fun-record i:term, i:list term, i:list term, o:ctx term.
 expand-fun-record (prod N Ty Bo) RevApp [F|FS] Out :- !,
   join-ctx {expand-fun N Ty F}
     (t1\ expand-fun-record (Bo t1) [t1|RevApp] FS) Out.
-expand-fun-record (let N Ty T Bo) RevApp [_|FS] Out :- !,
-  join-ctx {expand-term N Ty T} (t1\ expand-fun-record (Bo t1) RevApp FS) Out.
+expand-fun-record (let _ _ T Bo) RevApp [_|FS] Out :- !,
+  expand-fun-record (Bo T) RevApp FS Out.
 expand-fun-record _ RevApp [] (ctx-end (app Out)) :- !, std.rev RevApp Out.
 expand-fun-record Ty RevApp FS Out :- !,
   coq.error (expand-fun-record Ty RevApp FS Out).
@@ -107,7 +101,7 @@ expand-fun-whd N (prod N' Ty Bo) X Out :- !,
   map-ctx {push-fun-ctx Out2} (coq.mk-fun N' Ty) Out.
 expand-fun-whd _ Ty X Out :-
   coq.safe-dest-app Ty (global (indt RHD)) TyArgs,
-  records RHD NParams K KTy Projs, !,
+  expand-record RHD NParams K KTy Projs, !,
   std.assert! (std.length TyArgs NParams) "expand-fun-whd: arity mismatch",
   std.append TyArgs [X] ProjArgs,
   std.map Projs (p\ t\ coq.mk-app (global (const p)) ProjArgs t) Fields,
@@ -124,38 +118,50 @@ expand-fun N Ty X Out :- !, coq.error (expand-fun N Ty X Out).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 pred expand-term-record i:term, i:list term, i:list term, o:ctx term.
 expand-term-record (prod N Ty Bo) RevApp [F|FS] Out :- !,
-  join-ctx {expand-term N Ty F}
+  join-ctx {expand-term N Ty F []}
     (t1\ expand-term-record (Bo F) [t1|RevApp] FS) Out.
-expand-term-record (let N Ty T Bo) RevApp FS Out :- !,
-  join-ctx {expand-term N Ty T}
-    (t1\ expand-term-record (Bo t1) RevApp FS) Out.
+expand-term-record (let _ _ T Bo) RevApp FS Out :- !,
+  expand-term-record (Bo T) RevApp FS Out.
 expand-term-record _ RevApp [] (ctx-end (app Out)) :- !, std.rev RevApp Out.
 expand-term-record Ty RevApp FS Out :- !,
   coq.error (expand-term-record Ty RevApp FS Out).
 
-pred expand-term-app i:name, i:term, i:term, i:list term, o:ctx term.
-expand-term-app _ _ (global (indc K) as T) Args Out :-
-  records _ NParams K KTy _, !,
-  std.split-at NParams Args Params Fields,
+pred expand-term i:name, o:term, i:term, i:list term, o:ctx term.
+expand-term _ _ (global (indc K) as T) Stack Out :-
+  expand-record _ NParams K KTy _, !,
+  std.split-at NParams Stack Params Fields,
   expand-term-record
     {coq.subst-prod Params KTy} {std.rev [T|Params]} Fields Out.
-%expand-term-app _ _ (global (const C)) Args Out :- !.
-
-pred expand-term i:name, i:term, i:term, o:ctx term.
-expand-term N Ty (fun N' Ty' Bo) Out :- !,
+expand-term N Ty (global (const C)) Stack Out :-
+  expand-constant C T, !,
+  expand-term N Ty T Stack Out.
+expand-term N Ty (global (const P)) Stack Out :-
+  expand-projection P K NParams Idx,
+  std.drop NParams Stack [app [global (indc K)|KArgs]|Stack'],
+  std.nth {calc (NParams + Idx)} KArgs F, !,
+  expand-term N Ty F Stack' Out.
+expand-term N Ty (fun N' Ty' Bo) [] Out :- !,
   coq.unify-eq Ty (prod N' Ty' TyF) ok,
   (@pi-decl N' Ty' x\
     expand-fun N' Ty' x (Out1 x),
-    map-ctx (Out1 x) (x'\ expand-term N (TyF x') (Bo x')) (Out2 x)),
+    map-ctx (Out1 x) (x'\ expand-term N (TyF x') (Bo x') []) (Out2 x)),
   map-ctx {push-fun-ctx Out2} (f\ t\ t = fun N' Ty' f) Out.
-expand-term N Ty (let N' Ty' T' Bo) Out :- !,
+expand-term N Ty (fun N' Ty' Bo) [T|Stack] Out :- !,
   push-let-ctx
-    {map-ctx {expand-term N' Ty' T'} (t1\ expand-term N Ty (Bo t1))} Out.
+    {map-ctx {expand-term N' Ty' T []} (t1\ expand-term N Ty (Bo t1) Stack)}
+    Out.
+expand-term N Ty (let N' Ty' T Bo) Stack Out :- !,
+  push-let-ctx
+    {map-ctx {expand-term N' Ty' T []} (t1\ expand-term N Ty (Bo t1) Stack)}
+    Out.
+expand-term N Ty (app [HD|Args]) Stack Out :- !,
+  expand-term N Ty HD {std.append Args Stack} Out.
 % TODO: match and fix here
-expand-term N Ty T Out :-
-  coq.safe-dest-app T HD Args, expand-term-app N Ty HD Args Out, !.
-expand-term N Ty T (ctx-let N Ty T ctx-end) :- !.
-expand-term N Ty T Out :- !, coq.error (expand-term N Ty T Out).
+expand-term N Ty T Stack (ctx-let N Ty Out ctx-end) :- !,
+  coq.mk-app T Stack Out,
+  std.assert-ok! (coq.typecheck Out Ty) "An expanded term is ill-typed".
+expand-term N Ty T Stack Out :- !,
+  coq.error (expand-term N Ty T Stack Out).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 pred decl-expanded-constants i:id, i:ctx term, o:term.
@@ -169,18 +175,18 @@ decl-expanded-constants _ (ctx-end T) T :- !,
   std.assert-ok! (coq.typecheck T _) "An expanded term is ill-typed".
 
 pred expand-gref i:id, i:gref, o:prop.
-expand-gref NewName (const C) (expand-const C Out) :- !,
+expand-gref NewName (const C) (expand-constant C Out) :- !,
   std.assert! (coq.env.const C (some Bo) Ty)
     "only transparent constants can be expanded", !,
-  expand-term {coq.id->name "_"} Ty Bo E, !,
+  expand-term {coq.id->name "_"} Ty Bo [] E, !,
   decl-expanded-constants NewName E Out.
 expand-gref NewName GR Clause :- !, coq.error (expand-gref NewName GR Clause).
 
-% Entry point -----------------------------------------------------------------
+% Entry point ------------------------------------------------------------------
 main [str In, str Prefix] :- !,
   std.assert! (coq.locate In GR) "The first argument must be a global term",
   NewName is Prefix ^ {coq.gref->id GR},
   expand-gref NewName GR Clause,
   coq.elpi.accumulate _ "record.expand.db"
-    (clause _ (before "expand-const:start") Clause).
+    (clause _ (before "expand-constant:start") Clause).
 main _ :- !, coq.error "usage: Elpi record.expand global_term prefix".

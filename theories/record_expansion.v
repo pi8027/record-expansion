@@ -5,18 +5,26 @@ From record_expansion Extra Dependency "expand.elpi" as expand.
 Elpi Db record.expand.db lp:{{
 
 % the predicate to accumulate information about the record types to expand
-pred records
-  o:inductive,     % record to expand
-  o:int,           % number of parameters
-  o:constructor,   % record constructor
-  o:term,          % record constructor type
-  o:list constant. % projections
-:name "records:start"
-records _ _ _ _ _ :- fail.
+pred expand-record
+  o:inductive,      % record type
+  o:int,            % number of type parameters
+  o:constructor,    % record constructor
+  o:term,           % record constructor type
+  o:list constant.  % projections
+:name "expand-record:start"
+expand-record _ _ _ _ _ :- fail.
 
-pred expand-const i:constant, o:term.
-:name "expand-const:start"
-expand-const _ _ :- fail.
+pred expand-projection
+  o:constant,       % projection
+  o:constructor,    % record constructor
+  o:int,            % number of type parameters
+  o:int.            % index of the term
+:name "expand-projection:start"
+expand-projection _ _ _ _ :- fail.
+
+pred expand-constant i:constant, o:term.
+:name "expand-constant:start"
+expand-constant _ _ :- fail.
 
 }}.
 
@@ -32,18 +40,20 @@ Elpi Typecheck.
 
 Module Example1.
 
-Record r := { T : Type; op : T -> T -> T }.
+Record r := { T : Type; T' := T; op : T' -> T -> T }.
 
 Elpi record.register r.
 
+Elpi Query lp:{{ expand-fun `In` {{ r -> r }} _ A }}.
+Elpi Query lp:{{ expand-term _ {{ r -> r }} {{ fun x : r => x }} [] A }}.
+Elpi Query lp:{{ expand-term _ {{ r -> Type }} {{ fun x : r => T x }} [] A }}.
+
 Definition r_id (x : r) := x.
 
-Elpi Query lp:{{ expand-fun `In` {{ r -> r }} _ A }}.
-Elpi Query lp:{{ expand-term _ {{ r -> r }} {{ fun x : r => x }} A }}.
-Elpi Query lp:{{ expand-term _ {{ r -> Type }} {{ fun x : r => T x }} A }}.
 Elpi record.expand r_id "expanded_".
 Print expanded_r_id.
 Print expanded_r_id1.
+Elpi Query lp:{{ {{:gref r_id}} = const C, expand-constant C Out }}.
 
 End Example1.
 

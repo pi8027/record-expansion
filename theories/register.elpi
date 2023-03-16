@@ -1,10 +1,35 @@
+pred projection-clauses' i:int, i:int, i:constructor, i:term, i:list constant.
+projection-clauses' NParams Idx K (prod N Ty TyF) [P|PS] :- !,
+  coq.elpi.accumulate _ "record.expand.db"
+    (clause _ (before "expand-projection:start")
+              (expand-projection P K NParams Idx)),
+  @pi-decl N Ty x\ projection-clauses' NParams {calc (Idx + 1)} K (TyF x) PS.
+projection-clauses' NParams Idx K (let N Ty T TyF) [P|PS] :- !,
+  std.assert! (coq.env.const-body P (some PBody))
+    "A projection must not be opaque",
+  coq.elpi.accumulate _ "record.expand.db"
+    (clause _ (before "expand-constant:start") (expand-constant P PBody)),
+  @pi-def N Ty T x\
+    projection-clauses' NParams Idx K (TyF x) PS.
+projection-clauses' _ _ _ _ _ :- !.
+
+pred projection-clauses i:int, i:int, i:constructor, i:term, i:list constant.
+projection-clauses NParams NParams' K (prod N Ty TyF) PS :-
+  0 < NParams', !,
+  @pi-decl N Ty x\
+    projection-clauses NParams {calc (NParams' - 1)} K (TyF x) PS.
+projection-clauses NParams NParams' K (let N Ty T TyF) PS :- !,
+  @pi-def N Ty T x\ projection-clauses NParams NParams' K (TyF x) PS.
+projection-clauses NParams 0 K KTY PS :- !,
+  projection-clauses' NParams 0 K KTY PS.
+
+% Entry point ------------------------------------------------------------------
 main [str RName] :- !,
   std.assert! (coq.locate RName (indt R))
     "The first argument must be a record name",
-  std.assert! (coq.env.indt R tt N N _ [K] [KTY])
-    "The record is too complex",
-  std.map {coq.env.projections R} (p\ p'\ p = some p') Projs,
+  std.assert! (coq.env.indt R tt N N _ [K] [KTY]) "The record is too complex",
+  std.map {coq.env.projections R} (p\ p'\ p = some p') PS,
+  projection-clauses N N K KTY PS,
   coq.elpi.accumulate _ "record.expand.db"
-    (clause _ (before "records:start") (records R N K KTY Projs)).
-
+    (clause _ (before "expand-record:start") (expand-record R N K KTY PS)).
 main _ :- coq.error "Elpi record.register record_name".
